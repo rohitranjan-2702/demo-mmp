@@ -1,20 +1,3 @@
-/**
- * Static validation for SQL that comes from the model (or an API caller).
- *
- * This is the first of three layers; it is deliberately not the only one:
- *
- *   1. this file  — reject anything that is not a single read-only SELECT,
- *                   and force a LIMIT onto queries that lack one.
- *   2. connection — a ClickHouse user that only has SELECT grants (see
- *                   `readonlyClient` in ./clickhouse).
- *   3. settings   — `readonly`, `max_execution_time`, `max_result_rows` and
- *                   friends sent with every query (see `runReadOnlySql`).
- *
- * Parsing SQL with regexes is not sound on its own, which is exactly why
- * layers 2 and 3 exist: a statement that slips past here still cannot write,
- * cannot run longer than the cap, and cannot return more than the row cap.
- */
-
 export class SqlGuardError extends Error {
   constructor(message: string) {
     super(message);
@@ -22,11 +5,6 @@ export class SqlGuardError extends Error {
   }
 }
 
-/**
- * Blank out string literals, quoted identifiers and comments, preserving
- * length and offsets, so keyword matching never fires on a value like
- * `WHERE page = '/drop-table'` or on `-- insert into`.
- */
 const mask = (sql: string): string => {
   const out = sql.split("");
   const blank = (from: number, to: number) => {
@@ -48,7 +26,6 @@ const mask = (sql: string): string => {
           continue;
         }
         if (sql[j] === char) {
-          // A doubled quote is an escaped quote, not the end of the literal.
           if (sql[j + 1] === char) {
             j += 2;
             continue;
@@ -59,7 +36,7 @@ const mask = (sql: string): string => {
       }
       if (j >= sql.length) {
         throw new SqlGuardError(
-          `Unterminated ${char === "`" ? "identifier" : "string"} literal starting at character ${i + 1}.`
+          `Unterminated ${char === "`" ? "identifier" : "string"} literal starting at character ${i + 1}.`,
         );
       }
       blank(i, j + 1);
@@ -77,7 +54,9 @@ const mask = (sql: string): string => {
     if (char === "/" && next === "*") {
       const end = sql.indexOf("*/", i + 2);
       if (end === -1) {
-        throw new SqlGuardError("Unterminated block comment (`/*` with no `*/`).");
+        throw new SqlGuardError(
+          "Unterminated block comment (`/*` with no `*/`).",
+        );
       }
       blank(i, end + 2);
       i = end + 2;
@@ -95,16 +74,12 @@ interface ForbiddenPattern {
   reason: string;
 }
 
-/**
- * Defence in depth. The "must start with SELECT/WITH" rule plus the
- * single-statement rule already block most of these; these patterns catch the
- * exotic spellings and give the model a specific message to correct itself on.
- */
 const FORBIDDEN: ForbiddenPattern[] = [
   {
     pattern:
       /\b(insert\s+into|alter\s+(table|user|database)|drop\s+(table|database|view|user|dictionary|column|function|policy)|create\s+(table|database|view|user|dictionary|function|policy|temporary)|attach\s+(table|database|part|partition)|detach\s+(table|database|part|partition)|truncate\s+table|rename\s+table|replace\s+table|exchange\s+tables|optimize\s+table|grant\s+|revoke\s+|kill\s+(query|mutation)|system\s+(flush|reload|drop|stop|start|sync|restart|kill|shutdown))\b/i,
-    reason: "only read-only SELECT statements are allowed — no DDL, DML or admin commands",
+    reason:
+      "only read-only SELECT statements are allowed — no DDL, DML or admin commands",
   },
   {
     pattern:
@@ -129,19 +104,13 @@ const FORBIDDEN: ForbiddenPattern[] = [
 ];
 
 export interface PreparedSql {
-  /** The statement to execute, with a LIMIT appended if one was missing. */
   sql: string;
-  /** True when this guard added the LIMIT rather than the caller writing one. */
   limitApplied: boolean;
 }
 
-/**
- * Validate `input` and return an executable statement, or throw
- * {@link SqlGuardError} with a message the model can act on.
- */
 export const prepareReadOnlySql = (
   input: string,
-  maxRows: number
+  maxRows: number,
 ): PreparedSql => {
   const trimmed = input.trim();
 
@@ -151,11 +120,10 @@ export const prepareReadOnlySql = (
 
   const masked = mask(trimmed);
 
-  // Reject `SELECT 1; DROP TABLE events` — a trailing `;` is fine.
   const firstSemicolon = masked.indexOf(";");
   if (firstSemicolon !== -1 && masked.slice(firstSemicolon + 1).trim() !== "") {
     throw new SqlGuardError(
-      "Only one statement per call — remove everything after the first `;`."
+      "Only one statement per call — remove everything after the first `;`.",
     );
   }
 
@@ -166,11 +134,10 @@ export const prepareReadOnlySql = (
   if (!/^\s*(select|with)\b/i.test(maskedStatement)) {
     const firstWord = maskedStatement.trim().split(/\s+/)[0] ?? "";
     throw new SqlGuardError(
-      `Only SELECT queries are allowed, but this one starts with '${firstWord}'. Rewrite it as a SELECT (a leading WITH ... SELECT is fine).`
+      `Only SELECT queries are allowed, but this one starts with '${firstWord}'. Rewrite it as a SELECT (a leading WITH ... SELECT is fine).`,
     );
   }
 
-  // `WITH x AS (...)` must actually end in a SELECT, not e.g. an INSERT.
   if (!/\bselect\b/i.test(maskedStatement)) {
     throw new SqlGuardError("The statement contains no SELECT.");
   }
@@ -179,7 +146,7 @@ export const prepareReadOnlySql = (
     const match = maskedStatement.match(pattern);
     if (match) {
       throw new SqlGuardError(
-        `Query rejected at '${match[0].trim()}': ${reason}.`
+        `Query rejected at '${match[0].trim()}': ${reason}.`,
       );
     }
   }
@@ -191,10 +158,6 @@ export const prepareReadOnlySql = (
   return { sql: `${statement}\nLIMIT ${maxRows}`, limitApplied: true };
 };
 
-/**
- * Is there a LIMIT outside of any parentheses? A LIMIT inside a subquery does
- * not bound the result set, so it does not count.
- */
 const hasTopLevelLimit = (maskedStatement: string): boolean => {
   let depth = 0;
 

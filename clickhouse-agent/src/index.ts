@@ -40,7 +40,6 @@ async function streamAnswer(
   reply: FastifyReply,
   query: string,
 ): Promise<void> {
-  // We own the socket from here on; keep Fastify from sending its own reply.
   reply.hijack();
 
   const { raw } = reply;
@@ -53,7 +52,6 @@ async function streamAnswer(
     "X-Accel-Buffering": "no",
   });
 
-  // Let the agent stop working the moment the client walks away.
   const abort = new AbortController();
   raw.on("close", () => abort.abort());
 
@@ -90,8 +88,6 @@ fastify.get<{ Querystring: { query: string; stream?: boolean } }>(
         required: ["query"],
         properties: {
           query: { type: "string", minLength: 1 },
-          // `?stream=true` (or `Accept: text/event-stream`) answers with SSE
-          // instead of a single JSON body.
           stream: { type: "boolean", default: false },
         },
       },
@@ -141,8 +137,6 @@ fastify.post<{ Body: { sql: string; maxRows?: number } }>(
     try {
       return await runReadOnlySql(sql, { maxRows });
     } catch (err) {
-      // A rejected statement is the caller's mistake (400); anything else
-      // came back from ClickHouse itself (502).
       if (err instanceof SqlGuardError) {
         return reply.code(400).send({ sql, error: err.message });
       }

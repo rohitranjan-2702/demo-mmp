@@ -25,18 +25,12 @@ export async function ask(question: string): Promise<string> {
   return result.finalOutput ?? "";
 }
 
-/** One SSE-shaped update from a streamed agent run. */
 export type AskEvent =
   | { type: "token"; text: string }
   | { type: "tool_call"; name: string; arguments?: string }
   | { type: "tool_output"; name: string; output: unknown }
   | { type: "done"; answer: string };
 
-/**
- * Run the agent and yield progress as it happens: text deltas as the model
- * writes them, plus the tool calls it makes along the way so a caller can show
- * what the agent is doing during the long gaps between tokens.
- */
 export async function* askStream(
   question: string,
   signal?: AbortSignal,
@@ -50,7 +44,6 @@ export async function* askStream(
     }
   }
 
-  // Surfaces an error raised mid-run rather than ending on a silent half-answer.
   await stream.completed;
 
   yield { type: "done", answer: stream.finalOutput ?? "" };

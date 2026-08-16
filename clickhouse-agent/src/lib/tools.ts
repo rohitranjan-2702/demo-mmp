@@ -1,12 +1,13 @@
 import { tool } from "@openai/agents";
 import { z } from "zod";
 
-import { DEFAULT_DATABASE, queryRows, runReadOnlySql, SQL_LIMITS } from "./clickhouse";
+import {
+  DEFAULT_DATABASE,
+  queryRows,
+  runReadOnlySql,
+  SQL_LIMITS,
+} from "./clickhouse";
 
-/**
- * Tools are called by a model, so they never throw: a failed query comes back
- * as `{ error }` so the agent can read the message and correct itself.
- */
 const safely = async <T>(fn: () => Promise<T>) => {
   try {
     return await fn();
@@ -36,7 +37,7 @@ export const listTables = tool({
       .string()
       .nullable()
       .describe(
-        `Database to inspect. Pass null for the default database ('${DEFAULT_DATABASE}').`
+        `Database to inspect. Pass null for the default database ('${DEFAULT_DATABASE}').`,
       ),
   }),
   execute: async ({ database }) =>
@@ -59,14 +60,12 @@ export const listTables = tool({
         WHERE database = {db:String}
         ORDER BY name
         `,
-        { db }
+        { db },
       );
 
       if (tables.length === 0) {
-        // An unknown database looks identical to an empty one, so say so
-        // rather than letting the model conclude there is no data at all.
         const databases = await queryRows<{ name: string }>(
-          `SELECT name FROM system.databases ORDER BY name`
+          `SELECT name FROM system.databases ORDER BY name`,
         );
 
         return {
@@ -105,13 +104,13 @@ export const describeTable = tool({
       .string()
       .nullable()
       .describe(
-        `Database the table lives in. Pass null for the default database ('${DEFAULT_DATABASE}').`
+        `Database the table lives in. Pass null for the default database ('${DEFAULT_DATABASE}').`,
       ),
     includeSampleRows: z
       .boolean()
       .nullable()
       .describe(
-        "Pass true to also return 3 sample rows from the table. Null or false skips them."
+        "Pass true to also return 3 sample rows from the table. Null or false skips them.",
       ),
   }),
   execute: async ({ table, database, includeSampleRows }) =>
@@ -134,7 +133,7 @@ export const describeTable = tool({
         WHERE database = {db:String} AND table = {tbl:String}
         ORDER BY position
         `,
-        { db, tbl: table }
+        { db, tbl: table },
       );
 
       if (columns.length === 0) {
@@ -156,13 +155,13 @@ export const describeTable = tool({
         FROM system.tables
         WHERE database = {db:String} AND name = {tbl:String}
         `,
-        { db, tbl: table }
+        { db, tbl: table },
       );
 
       const sampleRows = includeSampleRows
         ? await queryRows(
             `SELECT * FROM {db:Identifier}.{tbl:Identifier} LIMIT 3`,
-            { db, tbl: table }
+            { db, tbl: table },
           )
         : undefined;
 
@@ -208,7 +207,7 @@ export const getQueryHistory = tool({
       .string()
       .nullable()
       .describe(
-        "Only return queries that touched this table, e.g. 'events' or 'mydb.events'. Null returns queries against any table."
+        "Only return queries that touched this table, e.g. 'events' or 'mydb.events'. Null returns queries against any table.",
       ),
     onlyErrors: z
       .boolean()
@@ -218,7 +217,7 @@ export const getQueryHistory = tool({
       .boolean()
       .nullable()
       .describe(
-        "Pass true to order by duration (slowest first) instead of most recent first."
+        "Pass true to order by duration (slowest first) instead of most recent first.",
       ),
   }),
   execute: async ({ hours, limit, table, onlyErrors, slowestFirst }) =>
@@ -226,22 +225,19 @@ export const getQueryHistory = tool({
       const lookbackHours = hours ?? 24;
       const rowLimit = limit ?? 20;
 
-      // query_log records one row per stage; keep only terminal states, and
-      // only the initial query so distributed sub-queries don't double up.
       const conditions = [
         "event_time >= now() - toIntervalHour({hours:UInt32})",
         "is_initial_query = 1",
         onlyErrors
           ? "type IN ('ExceptionBeforeStart', 'ExceptionWhileProcessing')"
           : "type IN ('QueryFinish', 'ExceptionBeforeStart', 'ExceptionWhileProcessing')",
-        // Skip introspection queries (including this one) so the history shows
-        // real analytical work rather than the agent's own bookkeeping.
+
         "NOT arrayExists(t -> t LIKE 'system.%', tables)",
       ];
 
       if (table) {
         conditions.push(
-          "arrayExists(t -> t = {table:String} OR splitByChar('.', t)[-1] = {table:String}, tables)"
+          "arrayExists(t -> t = {table:String} OR splitByChar('.', t)[-1] = {table:String}, tables)",
         );
       }
 
@@ -265,7 +261,7 @@ export const getQueryHistory = tool({
         ORDER BY ${slowestFirst ? "query_duration_ms DESC" : "event_time DESC"}
         LIMIT {limit:UInt32}
         `,
-        { hours: lookbackHours, limit: rowLimit, table: table ?? "" }
+        { hours: lookbackHours, limit: rowLimit, table: table ?? "" },
       );
 
       return { lookbackHours, queryCount: queries.length, queries };
@@ -285,7 +281,7 @@ export const runSql = tool({
     sql: z
       .string()
       .describe(
-        "The SELECT statement to run, e.g. \"SELECT country, count() AS c FROM events GROUP BY country ORDER BY c DESC\". Do not end it with a semicolon."
+        'The SELECT statement to run, e.g. "SELECT country, count() AS c FROM events GROUP BY country ORDER BY c DESC". Do not end it with a semicolon.',
       ),
     maxRows: z
       .number()
@@ -294,7 +290,7 @@ export const runSql = tool({
       .max(SQL_LIMITS.maxRows)
       .nullable()
       .describe(
-        `Row cap for this query. Null uses the maximum (${SQL_LIMITS.maxRows}). Values above the maximum are clamped down to it.`
+        `Row cap for this query. Null uses the maximum (${SQL_LIMITS.maxRows}). Values above the maximum are clamped down to it.`,
       ),
   }),
   execute: async ({ sql, maxRows }) =>
@@ -308,8 +304,6 @@ export const runSql = tool({
         columns: result.columns,
         rowCount: result.rowCount,
         rows: result.rows,
-        // Tell the model when it is looking at a partial answer, so it either
-        // says so or re-runs the query as an aggregate.
         truncated: result.truncated,
         limitApplied: result.limitApplied,
         note: result.truncated
